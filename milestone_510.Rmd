@@ -1,0 +1,374 @@
+---
+---
+---
+
+## TRGN 510 final project
+
+## Huizi Gao
+
+## 12/9/2021
+
+# Using DeSEQ2 to analyze and compare the gene expression differences in lung cancer patients with and without smoking history
+
+## **Introduction:**
+
+Smoking is harmful to health and an important factor inducing cancer, so I want to explore the influence of smoking on gene expression of lung cancer patients through this analysis. In this analysis, I will look for differences in gene expression of lung cancer at stage ib between the patient groups with and without  smoking history. There are 168 files in total including 60 samples of patients who have the smoking history and 108 samples of patients who do not smoke. In order to control the same number of  samples in two groups to analyze, I selected 30 samples separately from these two groups. DeSeq2 is used in this process. 
+
+## Data:
+
+All the datasets used in this vignette are from TCGA/GDC Data Portal (<https://portal.gdc.cancer.gov>)
+
+Primary Site of Cancer: Bonchus and Lung
+
+Program: TCGA
+
+Project: TCGA-LUAD
+
+Vital Status: Alive 
+
+Experimental Strategy: RNA-seq
+
+Workflow Type: HTSeq-Counts
+
+After filtering, a total of 168 samples emerged, including 60 samples of patients with a history of smoking and labeled with "SK" and 108 samples of patients without a history of smoking and labeled with "NSK." I took 30 samples separately from the two groups for analysis. 
+
+## The vignette link:
+
+<http://bioconductor.org/packages/release/bioc/vignettes/DESeq2/inst/doc/DESeq2.html>
+
+## Step 1: data input and construct a DESeqDataSet
+
+```{r}
+#if (!requireNamespace("BiocManager", quietly = TRUE))
+#     install.packages("BiocManager")
+#     install.packages("apeglm")
+#     BiocManager::install("BiocParallel")
+#     BiocManager::install("IHW")                 
+```
+
+```{r}
+library(apeglm)
+library(BiocParallel)
+library(IHW)                    
+#set up: install and load the packages required.
+```
+
+```{r}
+directory <- "/Users/gaohuizi/Desktop/510-HFP/twosmallgroup" 
+# assign the path of my htseq-count samples to "directory" for convinience 
+```
+
+```{r}
+setwd(directory) 
+getwd()     
+# make sure that the current working directory is where the files located
+```
+
+```{r}
+sampleFiles <- grep("SK",list.files(directory),value=TRUE)
+# specify files and read in
+sampleFiles 
+#to check if the "sampleFiles" is correct
+```
+
+```{r}
+sampleCondition <- sub("(.*SK).*","\\1",sampleFiles) 
+# abtain condition status  
+sampleCondition
+# to check if the condition is correct
+```
+
+```{r}
+sampleTable <- data.frame(sampleName = sampleFiles,
+                          fileName = sampleFiles,
+                          condition = sampleCondition)
+head(sampleTable,6)
+# to check "sampleTable"
+sampleTable$condition <- factor(sampleTable$condition)
+# The data of the condition column in SampleTable are organized and stored as data objects of different levels
+```
+
+```{r}
+sampleTable$condition
+# to check if the levels are what I need
+```
+
+```{r}
+library("DESeq2")
+ddsHTSeq <- DESeqDataSetFromHTSeqCount(sampleTable = sampleTable,
+#Htseq-count files are used in my analysis so I can use DESeqDataSetFromHTSeq() here.
+                                       directory = directory,
+                                       design= ~ condition)
+ddsHTSeq
+# build up the DESeqDataSet
+```
+
+```{r}
+ddsHTSeq$condition <- factor(ddsHTSeq$condition, levels = c("NSK","SK"))
+ddsHTSeq$condition
+#reset the factor levels, to tell DESeq2 which level I want to compare against
+```
+
+## Step 2: gene differential expression analysis
+
+```{r}
+ddsHTSeq <- DESeq(ddsHTSeq)
+res <- results(ddsHTSeq)
+# extract the result table from the differential analysis above 
+res
+# to check the result table
+```
+
+```{r}
+res <- results(ddsHTSeq, contrast=c("condition","SK","NSK"))
+res
+```
+
+## Step 3: change shrinkage for visualization and ranking
+
+```{r}
+resultsNames(ddsHTSeq)
+#get the number of coefficient
+```
+
+```{r}
+resLFC <- lfcShrink(ddsHTSeq, coef="condition_SK_vs_NSK", type="apeglm") 
+resLFC
+#change shrinkage and check
+```
+
+```{r}
+#library("BiocParallel")
+#register(MulticoreParam(4))
+#parallelization for speed-up should be done at the beginning of the analysis if necessary
+```
+
+## Step 4: P-value adjustment
+
+```{r}
+resOrdered <- res[order(res$pvalue),]
+#order the result table 
+
+```
+
+```{r}
+summary(res)
+#summarize the basic tallies 
+```
+
+```{r}
+sum(res$padj < 0.1, na.rm=TRUE)
+# count how many <0.1 
+```
+
+```{r}
+res05 <- results(ddsHTSeq, alpha=0.05)
+summary(res05)
+```
+
+```{r}
+sum(res05$padj < 0.05, na.rm=TRUE)
+```
+
+## Step 5: independent hypothesis weighting
+
+```{r}
+library("IHW")
+resIHW <- results(ddsHTSeq, filterFun=ihw)
+summary(resIHW)
+sum(resIHW$padj < 0.1, na.rm=TRUE)
+metadata(resIHW)$ihwResult
+```
+
+## Step 6: explore and export results
+
+```{r}
+plotMA(res, ylim=c(-5,5))
+#plotMA shows the log2 fold changes attributable to a given variable over the mean of normalized counts for all the samples in the DESeqDataSet
+```
+
+**The lower left or upper right of the dots represent the more abundant and variable genes**
+
+```{r}
+plotMA(resLFC, ylim=c(-5,5))
+#the MA-plot for the shrunken log2 fold changes,removing the noise associated with log2 fold changes from low count genes
+```
+
+**Eliminate noise, more intuitive**
+
+```{r}
+#idx <- identify(res$baseMean, res$log2FoldChange)
+#rownames(res)[idx]
+```
+
+## step 7: alternative shrinkage estimators
+
+```{r}
+resultsNames(ddsHTSeq)
+
+```
+
+```{r}
+resNorm <- lfcShrink(ddsHTSeq, coef=2, type="normal")
+resAsh <- lfcShrink(ddsHTSeq, coef=2, type="ashr")
+# we have two coefficients
+```
+
+```{r}
+par(mfrow=c(1,3), mar=c(4,4,2,1))
+xlim <- c(1,1e5); ylim <- c(-3,3)
+plotMA(resLFC, xlim=xlim, ylim=ylim, main="apeglm")
+plotMA(resNorm, xlim=xlim, ylim=ylim, main="normal")
+plotMA(resAsh, xlim=xlim, ylim=ylim, main="ashr")
+```
+
+**The noise in apeglm is lowest, which is better.**
+
+## Step 8: plot counts
+
+```{r}
+plotCounts(ddsHTSeq, gene=which.min(res$padj), intgroup="condition")
+
+```
+
+**Specify the gene which had the smallest p value from the results table created the plot counts. it is ENSG00000075043.16, it is downregulated**
+
+```{r}
+d <- plotCounts(ddsHTSeq, gene=which.min(res$padj), intgroup="condition", 
+                returnData=TRUE)
+#the function should only return a data.frame for plotting with ggplot.
+library("ggplot2")
+ggplot(d, aes(x=condition, y=count)) + 
+  geom_point(position=position_jitter(w=0.1,h=0)) + 
+  scale_y_log10(breaks=c(25,100,400))
+```
+
+**Specify the gene which had the smallest p value from the results table created the plot counts. it is ENSG00000075043.16, it is downregulated.**
+
+```{r}
+mcols(res)$description
+#which variables and tests were used can be found by calling the function mcols on the results object
+```
+
+## Step 9: exporting results to CSV files
+
+```{r}
+resSig <- subset(resOrdered, padj < 0.1)
+resSig
+#Exporting only the results which pass an adjusted p value threshold
+```
+
+```{r}
+write.csv(as.data.frame(resSig), 
+          file="condition_results.csv")
+
+```
+
+## Step 10: extracting transformed values
+
+```{r}
+vsd <- vst(ddsHTSeq, blind=FALSE)
+head(assay(vsd), 3)
+#extract the matrix of normalized values.
+```
+
+```{r}
+BiocManager::install("vsn")
+```
+
+## Step 11: effects of transformations on the variance
+
+```{r}
+ntd <- normTransform(ddsHTSeq)
+library("vsn")
+meanSdPlot(assay(ntd))
+
+```
+
+```{r}
+meanSdPlot(assay(vsd))
+
+```
+
+**The standard deviation of the transformed data, across samples, against the mean, using the shifted logarithm transformation**
+
+## Step 12: heatmap of the count matrix
+
+```{r}
+#install.packages("plyr")
+#library("plyr")
+```
+
+```{r}
+#install.packages("stringr")
+```
+
+```{r}
+library("pheatmap")
+library("stringr")
+
+select <- order(rowMeans(counts(ddsHTSeq,normalized=TRUE)),
+                decreasing=TRUE)[1:20]
+#All genes were sorted according to their expression levels from high to low, and the top 20 are selected
+df <- as.data.frame(colData(ddsHTSeq)[,c("condition")])
+colnames(assay(vsd)) <- str_sub(colnames(assay(vsd)), 1, 21)
+rownames(df) <- colnames(assay(vsd))
+pheatmap(assay(vsd)[select,],cellwidth = 3,cellheight = 8,fontsize_row = 9,fontsize_col =4, annotation_col=df)
+```
+
+**The 20 genes with the highest expression level in the two groups were selected to draw heat maps, with blue representing the samples with relatively low expression level, red representing the samples with relatively high expression level, and light red, light blue and white representing the genes with intermediate expression level. The greater the difference in the red and blue distribution of a certain gene between the two groups, indicating that there was a significant difference in the expression of this gene between the two groups.**
+
+## Step 13: heatmap of the sample-to-sample distances
+
+```{r}
+sampleDists <- dist(t(assay(vsd)))
+```
+
+```{r}
+library("RColorBrewer")
+sampleDistMatrix <- as.matrix(sampleDists)
+rownames(sampleDistMatrix) <- paste(vsd$condition, vsd$type, sep="-")
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         fontsize_row = 5,
+         col=colors)
+#I apply the dist function to the transpose of the transformed count matrix to get sample-to-sample distances
+```
+
+**A heatmap of the distance matrix, which gives similarities and dissimilarities between samples.**
+
+## Step 14: principal component plot of the samples
+
+```{r}
+plotPCA(vsd, intgroup=c("condition"))
+#plot PCA graph
+```
+
+**PCA can distinguish the control group from the experimental group. In PCA, if the samples are clustered together, the difference between these samples is small; on the contrary, the farther the distance between samples is, the greater the difference between samples is.**
+
+## Conclusion:
+
+1.  I deleted the Cluster_rows/cols arguments, so the heat map automatically aggregates the most relevant samples based on the correlation of genes and samples. From the analysis results of the heat map, it can be seen that the horizontal color contrast of PGC, SFTPC, SFTPA2 and SFTPA1 genes is obvious, and their expression levels vary greatly in different samples. Sixteen samples from NSK10 to SK11 are aggregated together due to similarity, and the four genes discussed above shows high expression consistently. However, SK samples and NSK samples accounted for half and half, so the expression patterns of the four genes were similar in the samples within this range. In a total of 13 samples from SK7 to SK1, the above four genes showS extremely low expression, but the number of SK samples and NSK samples was also close to 1:1, so the expression patterns of these four genes were relatively consistent in the two groups of samples within this interval. From SK17 to SK26, the samples with very low gene expression level are NSK type, and the samples with significantly high gene expression level are SK type. Compared with samples from NSK11 to NSK7, the expression levels of the four genes are higher in SK17 to SK30 regions with more SK samples. In summary, it can be concluded that there are a few differences that is not so obvious in the expression of these four genes in a certain sample interval. Low credibility of the results. The heatmap confirms this conclusion as well. The upregulation of SFTPC gene is associated with the progression of lung cancer, and some variation of SFTPA2 gene is associated with idiopathic pulmonary fibrosis. SFTPA1 is a classic biomarker of alveolar cell canceration, and PGC gene is a muscle fiber specific related gene, which seems not to be a typical lung cancer related gene.
+
+2.  The above results may be due to data selection problems. The sample size of this analysis was too small and the statistical results were not representative, so significant differences in gene expression could not be observed. It is also possible that mutations associated with smoking were not among the genes studied in the analysis.
+
+3.  In the PCA diagram, SK group and NSK group have a high degree of overlap, except for a region in the upper left corner where SK samples have obvious aggregation. Therefore, the available genes have no obvious differential expression in most samples, and only a few samples shows differences between smokers and non-smokers, which is consistent with the conclusion obtained in the heat map. The difference in the upper left corner of PCA does not exclude the possibility of systematic error.
+
+## Known issues:
+
+1.  In this analysis, all data are manually downloaded, integrated, labeled and decompressed, which is a tedious and error-prone process. When I tried to write codes to implement the process from data download to decompression, I got bugs that are hard to fix. If the fix later succeeds, I might reintroduce the correct code into the analysis.
+2.  The sample size of data for this analysis is too small. The original sample size was 168, but for the sake of analysis efficiency and control that the two groups had the same sample size, I reduced the sample size of each group to 30. But 168 samples of data can still be analyzed by my Vignette.
+3.  In my Vignette, I omitted the pre-filting step, which was skipped because it was more error-prone and didn't significantly improve the speed of the code.
+4.  Co-variates are not taken into account in this analysis, because there is no factor data type that can be used in addition to condition in the sample information stored in Coldata, so multi-factor analysis cannot be carried out. The solution may be to re-select the analyzed data and check if paired -end/single read information is included.
+5.  I used the webpage to change the differentially expressed genes into Hugo name, actually it would be better to use the code of biomart package.
+
+## Reference:
+
+1.  Love, M.I., Huber, W., Anders, S. (2014) Moderated estimation of fold change and dispersion for RNA-seq data with DESeq2. *Genome Biology*, **15**:550. [10.1186/s13059-014-0550-8](http://dx.doi.org/10.1186/s13059-014-0550-8)
+
+2.  Zhu, A., Ibrahim, J.G., Love, M.I. (2018) Heavy-tailed prior distributions for sequence count data: removing the noise and preserving large differences. *Bioinformatics*. [10.1093/bioinformatics/bty895](https://doi.org/10.1093/bioinformatics/bty895)
+
+    Stephens, M. (2016) False discovery rates: a new deal. *Biostatistics*, **18**:2. [10.1093/biostatistics/kxw041](https://doi.org/10.1093/biostatistics/kxw041)
